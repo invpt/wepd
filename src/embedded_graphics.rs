@@ -2,7 +2,6 @@ use embedded_graphics_core::prelude::{Dimensions, DrawTarget, PixelColor};
 
 use super::*;
 
-/// Color with 3 states.
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub enum Color {
     Black,
@@ -24,31 +23,10 @@ impl Framebuffer {
         }
     }
 
-    pub fn flush<
-        'a,
-        Delay,
-        Spi,
-        Dc,
-        Busy,
-        Rst,
-        Wait,
-        CurrentTimeMs,
-        SpiError,
-        InputError,
-        OutputError,
-    >(
+    pub fn flush<C: IsDisplayConfiguration>(
         &mut self,
-        display: &'a mut Display<Delay, Spi, Dc, Busy, Rst, Wait, CurrentTimeMs>,
-    ) -> Result<(), DisplayError<SpiError, InputError, OutputError>>
-    where
-        Delay: DelayNs,
-        Spi: SpiDevice<Error = SpiError>,
-        Dc: OutputPin<Error = OutputError>,
-        Busy: InputPin<Error = InputError>,
-        Rst: OutputPin<Error = OutputError>,
-        Wait: FnMut(),
-        CurrentTimeMs: FnMut() -> u64,
-    {
+        display: &mut Display<C>,
+    ) -> Result<(), Error<C>> {
         display.draw_image(&self.framebuffer, 0, 0, 200, 200)
     }
 }
