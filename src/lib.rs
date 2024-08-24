@@ -8,8 +8,12 @@ use embedded_hal::{
     spi::{self, SpiBus, SpiDevice},
 };
 
+#[cfg(feature = "embedded-graphics")]
+mod embedded_graphics;
 mod single_device;
 
+#[cfg(feature = "embedded-graphics")]
+pub use embedded_graphics::*;
 pub use single_device::*;
 
 const WIDTH: usize = 200;
@@ -34,13 +38,13 @@ struct Span {
 
 impl Span {
     /// Returns the size of the span, calculated as `hi - lo`.
-    pub fn size(self) -> i16 {
+    fn size(self) -> i16 {
         self.hi - self.lo
     }
 
     /// Computes the intersection of two spans.
     /// Returns `None` if there is no intersection, otherwise returns `Some(Span)`.
-    pub fn intersection(self, other: Span) -> Option<Span> {
+    fn intersection(self, other: Span) -> Option<Span> {
         let lo = self.lo.max(other.lo);
         let hi = self.hi.min(other.hi);
 
