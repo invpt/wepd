@@ -29,4 +29,4 @@ let mut display = Display::new(DisplayConfiguration {
 
 ## State
 
-This was a quick port from the original implementation that directly used APIs exposed by `esp-hal`.
+This was a quick port from my original implementation that directly used APIs exposed by `esp-hal`.
