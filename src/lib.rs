@@ -10,13 +10,18 @@ use embedded_hal::{
 
 #[cfg(feature = "embedded-graphics")]
 mod embedded_graphics;
+mod geometry;
+mod private {
+    pub trait Internal {}
+}
 
+use geometry::*;
+use private::*;
 #[cfg(feature = "embedded-graphics")]
 pub use embedded_graphics::*;
 
 const WIDTH: usize = 200;
 const HEIGHT: usize = 200;
-
 const SCREEN_RECT: Rect = Rect {
     x: Span {
         lo: 0,
@@ -28,51 +33,9 @@ const SCREEN_RECT: Rect = Rect {
     },
 };
 
-#[derive(Clone, Copy, Debug)]
-struct Span {
-    pub lo: i16,
-    pub hi: i16,
-}
-
-impl Span {
-    /// Returns the size of the span, calculated as `hi - lo`.
-    fn size(self) -> i16 {
-        self.hi - self.lo
-    }
-
-    /// Computes the intersection of two spans.
-    /// Returns `None` if there is no intersection, otherwise returns `Some(Span)`.
-    fn intersection(self, other: Span) -> Option<Span> {
-        let lo = self.lo.max(other.lo);
-        let hi = self.hi.min(other.hi);
-
-        if lo <= hi {
-            Some(Span { lo, hi })
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Rect {
-    x: Span,
-    y: Span,
-}
-
-impl Rect {
-    /// Computes the intersection of two rectangles.
-    /// Returns `None` if there is no intersection, otherwise returns `Some(Rect)`.
-    fn intersection(self, other: Rect) -> Option<Rect> {
-        let x = self.x.intersection(other.x)?;
-        let y = self.y.intersection(other.y)?;
-
-        Some(Rect { x, y })
-    }
-}
-
 #[derive(Debug)]
 pub enum DisplayError<Spi, Input, Output> {
+    BusyTimeout,
     Spi(Spi),
     Input(Input),
     Output(Output),
@@ -84,21 +47,20 @@ impl<Spi, Input, Output> From<Spi> for DisplayError<Spi, Input, Output> {
     }
 }
 
-mod private {
-    pub trait Internal {}
-}
+type Error<C> = DisplayError<
+    <C as IsDisplayConfiguration>::SpiError,
+    <C as IsDisplayConfiguration>::InputError,
+    <C as IsDisplayConfiguration>::OutputError,
+>;
 
-use private::Internal;
-
-/// A helper trait to avoid needing to repeat type constraints. See [DisplayConfiguration].
+/// A helper trait to avoid repeating type constraints. See [DisplayConfiguration].
 pub trait IsDisplayConfiguration: Internal {
     type Spi: SpiDevice<Error = Self::SpiError>;
     type Dc: OutputPin<Error = Self::OutputError>;
     type Rst: OutputPin<Error = Self::OutputError>;
     type Busy: InputPin<Error = Self::InputError>;
     type Delay: DelayNs + Clone;
-    type CurrentMillis: FnMut() -> u64;
-    type Wait: FnMut();
+    type Wait: BusyWait;
 
     type SpiError: spi::Error;
     type OutputError: Debug;
@@ -112,36 +74,33 @@ pub trait IsDisplayConfiguration: Internal {
         Self::Rst,
         Self::Busy,
         Self::Delay,
-        Self::CurrentMillis,
         Self::Wait,
     >;
 }
 
-pub struct DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, CurrentMillis, Wait> {
+pub struct DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, Wait> {
     pub spi: Spi,
     pub dc: Dc,
     pub rst: Rst,
     pub busy: Busy,
     pub delay: Delay,
-    pub current_millis: CurrentMillis,
-    pub wait: Wait,
+    pub busy_wait: Wait,
 }
 
-impl<Spi, Dc, Rst, Busy, Delay, CurrentMillis, Wait> Internal
-    for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, CurrentMillis, Wait>
+impl<Spi, Dc, Rst, Busy, Delay, BusyCallback> Internal
+    for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, BusyCallback>
 {
 }
 
-impl<Spi, Dc, Rst, Busy, Delay, CurrentMillis, Wait, SpiError, OutputError, InputError>
-    IsDisplayConfiguration for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, CurrentMillis, Wait>
+impl<Spi, Dc, Rst, Busy, Delay, Wait, SpiError, OutputError, InputError>
+    IsDisplayConfiguration for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, Wait>
 where
     Spi: SpiDevice<Error = SpiError>,
     Dc: OutputPin<Error = OutputError>,
     Rst: OutputPin<Error = OutputError>,
     Busy: InputPin<Error = InputError>,
     Delay: DelayNs + Clone,
-    CurrentMillis: FnMut() -> u64,
-    Wait: FnMut(),
+    Wait: BusyWait,
     SpiError: spi::Error,
     OutputError: Debug,
     InputError: Debug,
@@ -151,7 +110,6 @@ where
     type Rst = Rst;
     type Busy = Busy;
     type Delay = Delay;
-    type CurrentMillis = CurrentMillis;
     type Wait = Wait;
     type SpiError = SpiError;
     type OutputError = OutputError;
@@ -165,10 +123,68 @@ where
         Self::Rst,
         Self::Busy,
         Self::Delay,
-        Self::CurrentMillis,
         Self::Wait,
     > {
         self
+    }
+}
+
+#[derive(Debug)]
+pub struct BusyTimeout;
+
+pub trait BusyWait {
+    fn poll_wait(&mut self) -> Result<(), BusyTimeout>;
+}
+
+pub struct DelayWaiter<Delay> {
+    delay: Delay,
+    delay_ms: u32,
+    timeout_ms: u32,
+}
+
+impl<Delay> DelayWaiter<Delay>
+where Delay: DelayNs {
+    pub fn new(delay: Delay) -> Self {
+        Self {
+            delay,
+            delay_ms: 1,
+            timeout_ms: 100_000,
+        }
+    }
+
+    pub fn with_delay_ms(self, ms: u32) -> Self {
+        Self {
+            delay_ms: ms,
+            ..self
+        }
+    }
+
+    pub fn with_timeout_ms(self, ms: u32) -> Self {
+        Self {
+            timeout_ms: ms,
+            ..self
+        }
+    }
+}
+
+impl<Delay> BusyWait for DelayWaiter<Delay>
+where Delay: DelayNs {
+    fn poll_wait(&mut self) -> Result<(), BusyTimeout> {
+        self.delay.delay_ms(self.delay_ms);
+        
+        if self.timeout_ms != 0 {
+            match self.timeout_ms.checked_sub(self.delay_ms) {
+                Some(new_timeout) => {
+                    self.timeout_ms = new_timeout;
+                    Ok(())
+                }
+                None => {
+                    Err(BusyTimeout)
+                }
+            }
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -178,14 +194,8 @@ pub struct Display<C: IsDisplayConfiguration> {
     initial_refresh: bool,
     initial_write: bool,
     config:
-        DisplayConfiguration<C::Spi, C::Dc, C::Rst, C::Busy, C::Delay, C::CurrentMillis, C::Wait>,
+        DisplayConfiguration<C::Spi, C::Dc, C::Rst, C::Busy, C::Delay, C::Wait>,
 }
-
-type Error<C> = DisplayError<
-    <C as IsDisplayConfiguration>::SpiError,
-    <C as IsDisplayConfiguration>::InputError,
-    <C as IsDisplayConfiguration>::OutputError,
->;
 
 impl<C: IsDisplayConfiguration> Display<C> {
     pub fn new(config: C) -> Result<Self, Error<C>> {
@@ -476,22 +486,16 @@ impl<C: IsDisplayConfiguration> Display<C> {
     }
 
     fn wait_while_busy(&mut self) -> Result<(), Error<C>> {
+        // Give some time for `busy` to be asserted by the display
         self.config.delay.delay_ms(1);
-        let start = (self.config.current_millis)();
-        loop {
-            if do_input(self.config.busy.is_low())? {
-                break;
-            }
 
-            (self.config.wait)();
-
-            if do_input(self.config.busy.is_low())? {
-                break;
-            }
-
-            let busy_timeout = 10000;
-            if (self.config.current_millis)() - start > busy_timeout {
-                break;
+        while do_input(self.config.busy.is_high())? {
+            match self.config.busy_wait.poll_wait() {
+                Ok(()) => (),
+                Err(BusyTimeout) => match do_input(self.config.busy.is_high())? {
+                    true => return Err(DisplayError::BusyTimeout),
+                    false => return Ok(()),
+                },
             }
         }
 
