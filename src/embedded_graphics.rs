@@ -19,11 +19,16 @@ where
     framebuffer: [u8; FB_WIDTH * FB_HEIGHT / 8],
 }
 
-impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> Framebuffer<{FB_WIDTH}, {FB_HEIGHT}>
+impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> Framebuffer<{ FB_WIDTH }, { FB_HEIGHT }>
 where
     [(); FB_WIDTH * FB_HEIGHT / 8]:,
 {
     pub fn new() -> Self {
+        // https://github.com/nvzqz/static-assertions/issues/40
+        // Not yet
+        // assert!(FB_WIDTH % 8 == 0);
+        // assert!(FB_HEIGHT % 8 == 0);
+        // This should be handled in another way
         Self {
             framebuffer: [0xFF; FB_WIDTH * FB_HEIGHT / 8],
         }
@@ -35,11 +40,18 @@ where
         x_lo: i16,
         y_lo: i16,
     ) -> Result<(), Error<C>> {
-        display.draw_image(&self.framebuffer, x_lo, y_lo, FB_WIDTH as i16, FB_HEIGHT as i16)
-    }
+        display.draw_image(
+            &self.framebuffer,
+            x_lo,
+            y_lo,
+            x_lo + FB_WIDTH as i16,
+            y_lo + FB_HEIGHT as i16,
+        )
+    }    
 }
 
-impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> Dimensions for Framebuffer<{FB_WIDTH}, {FB_HEIGHT}>
+impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> Dimensions
+    for Framebuffer<{ FB_WIDTH }, { FB_HEIGHT }>
 where
     [(); FB_WIDTH * FB_HEIGHT / 8]:,
 {
@@ -54,37 +66,47 @@ where
     }
 }
 
-impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> DrawTarget for Framebuffer<{FB_WIDTH}, {FB_HEIGHT}>
+const fn line_bytes(width: u32, bits_per_pixel: usize) -> usize {
+    (width as usize * bits_per_pixel + 7) / 8
+}
+
+impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> DrawTarget
+    for Framebuffer<{ FB_WIDTH }, { FB_HEIGHT }>
 where
     [(); FB_WIDTH * FB_HEIGHT / 8]:,
 {
     type Color = Color;
     type Error = ();
 
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), ()>
     where
-        I: IntoIterator<Item = embedded_graphics_core::Pixel<Self::Color>>,
+        I: IntoIterator<Item = embedded_graphics_core::Pixel<Color>>,
     {
         for embedded_graphics_core::Pixel(point, color) in pixels {
-            if point.x < 0 || point.x >= FB_WIDTH as i32 || point.y < 0 || point.y >= FB_HEIGHT as i32 {
-                continue;
-            }
+            // Maybe implement it for the enum?
+            let color_value = match color {
+                Color::White => 1,
+                Color::Black => 0,
+            };
+
             let x = point.x as usize;
             let y = point.y as usize;
-            let byte_index = x / 8 + y * FB_WIDTH / 8;
-            let byte = &mut self.framebuffer[byte_index];
-            let bit_index = 7 - x % 8;
 
-            match color {
-                Color::White => {
-                    *byte |= 0b1 << bit_index;
-                }
-                Color::Black => {
-                    *byte &= !(0b1 << bit_index);
-                }
+            if x >= FB_WIDTH || y >= FB_HEIGHT {
+                continue;
+            }
+
+            let index = (y * FB_WIDTH + x) / 8;
+            let bit = 7 - (x % 8);
+
+            if color_value == 1 {
+                // White
+                self.framebuffer[index] |= 1 << bit;
+            } else {
+                // Black
+                self.framebuffer[index] &= !(1 << bit);
             }
         }
-
         Ok(())
     }
 }
