@@ -66,10 +66,6 @@ where
     }
 }
 
-const fn line_bytes(width: u32, bits_per_pixel: usize) -> usize {
-    (width as usize * bits_per_pixel + 7) / 8
-}
-
 impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> DrawTarget
     for Framebuffer<{ FB_WIDTH }, { FB_HEIGHT }>
 where
