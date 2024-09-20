@@ -195,22 +195,26 @@ pub struct Display<C: IsDisplayConfiguration> {
     initialized: bool,
     initial_refresh: bool,
     initial_write: bool,
+    hibernating: bool,
     config:
         DisplayConfiguration<C::Spi, C::Dc, C::Rst, C::Busy, C::Delay, C::Wait>,
 }
 
 impl<C: IsDisplayConfiguration> Display<C> {
-    pub fn new(config: C) -> Result<Self, Error<C>> {
+    // hibernating argument is needed here for systems who can't remember the whole variable in rtc memory, as it's always been done
+    pub fn new(config: C, hibernating: bool) -> Result<Self, Error<C>> {
         let mut config = config.get();
 
+        // Not sure, is this really needed?
         do_output(config.dc.set_high())?;
         do_output(config.rst.set_high())?;
 
         Ok(Self {
             initialized: false,
             power_is_on: false,
-            initial_refresh: true,
-            initial_write: true,
+            initial_refresh: !hibernating,
+            initial_write: !hibernating,
+            hibernating,
             config,
         })
     }
@@ -313,15 +317,17 @@ impl<C: IsDisplayConfiguration> Display<C> {
         Ok(())
     }
 
-    fn init(&mut self) -> Result<(), Error<C>> {
+    pub fn init(&mut self) -> Result<(), Error<C>> {
         self.init_display()?;
-        self.power_on()?;
+        //self.power_on()?; // Not sure
         self.initialized = true;
         Ok(())
     }
 
     fn init_display(&mut self) -> Result<(), Error<C>> {
-        // TODO:   if (_hibernating) _reset();
+        if self.hibernating {
+            self.reset()?;
+        }
 
         self.transfer_command(0x01)?;
         self.config.spi.write(&[0xC7, 0x00, 0x00])?;
@@ -345,7 +351,9 @@ impl<C: IsDisplayConfiguration> Display<C> {
         }
 
         self.transfer_command(0x22)?;
-        self.config.spi.write(&[0xf8])?;
+        // Objection? https://github.com/Szybet/GxEPD2-watchy/blob/0b59ccc5bda6a96f9ad7fccb9a53279fef1322fb/src/epd/GxEPD2_154_D67.cpp#L321
+        // Here it's 0xe0
+        self.config.spi.write(&[0xe0])?;
         self.transfer_command(0x20)?;
         self.wait_while_busy()?;
         self.power_is_on = true;
@@ -373,6 +381,18 @@ impl<C: IsDisplayConfiguration> Display<C> {
         self.transfer_command(0x20)?;
         self.wait_while_busy()?;
         self.power_is_on = false;
+        self.initialized = false;
+
+        Ok(())
+    }
+
+    pub fn hibernate(&mut self) -> Result<(), Error<C>> {
+        self.power_off()?;
+
+        // https://github.com/Szybet/GxEPD2-watchy/blob/0b59ccc5bda6a96f9ad7fccb9a53279fef1322fb/src/epd/GxEPD2_154_D67.cpp#L285
+        self.transfer_command(0x10)?;
+        self.config.spi.write(&[0x1])?;
+        self.hibernating = true;
         self.initialized = false;
 
         Ok(())
