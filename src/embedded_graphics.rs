@@ -23,14 +23,20 @@ impl<const FB_WIDTH: usize, const FB_HEIGHT: usize> Framebuffer<{ FB_WIDTH }, { 
 where
     [(); FB_WIDTH * FB_HEIGHT / 8]:,
 {
-    pub fn new() -> Self {
+    pub fn new(color: Color) -> Self {
         // https://github.com/nvzqz/static-assertions/issues/40
         // Not yet
         // assert!(FB_WIDTH % 8 == 0);
         // assert!(FB_HEIGHT % 8 == 0);
         // This should be handled in another way
+
+        let color_byte = match color {
+            Color::Black => 0,
+            Color::White => 0xFF,
+        };
+
         Self {
-            framebuffer: [0xFF; FB_WIDTH * FB_HEIGHT / 8],
+            framebuffer: [color_byte; FB_WIDTH * FB_HEIGHT / 8],
         }
     }
 
