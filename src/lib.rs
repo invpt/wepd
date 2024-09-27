@@ -395,6 +395,10 @@ impl<C: IsDisplayConfiguration> Display<C> {
         self.hibernating = true;
         self.initialized = false;
 
+        // To reduce power consumption by 600 uA
+        do_output(self.config.rst.set_high())?;
+        do_output(self.config.dc.set_high())?;
+
         Ok(())
     }
 
