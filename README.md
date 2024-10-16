@@ -68,6 +68,33 @@ fn main() -> ! {
 }
 ```
 
+## Embedded Graphics Examples
+Make sure to have the `embedded-graphics` feature flag set. For embedded graphics `BinaryColor::Off` is a black pixel and `BinaryColor::On` is a white pixel on the display.
+
+### Text
+```rust
+    //Creates a frame buffer for embedded graphics
+    let mut fb = wepd::Framebuffer::new();
+    //Create your embedded text
+    let style = MonoTextStyle::new(&ascii::FONT_10X20, BinaryColor::Off);
+    Text::new("Hello world", Point { x: 5, y: 15 }, style)
+        .draw(&mut fb)
+        .unwrap();
+    //Write the frame buffer to the display struct made earlier
+    fb.flush(&mut display).unwrap();
+```
+
+### Images using tinybmp
+```rust
+    //Creates a frame buffer for embedded graphics
+    let mut fb = wepd::Framebuffer::new();
+    //Have bmp under 200x200 pixels in your project directory and include it
+    let bmp_data = include_bytes!("../ferris.bmp");
+    let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
+    //Write the frame buffer to the display struct made earlier
+    fb.flush(&mut display).unwrap();
+```
+
 ## State
 
 This was a quick port from my original implementation that directly used APIs exposed by `esp-hal`.
