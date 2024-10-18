@@ -91,6 +91,7 @@ Make sure to have the `embedded-graphics` feature flag set. For embedded graphic
     //Have bmp under 200x200 pixels in your project directory and include it
     let bmp_data = include_bytes!("../ferris.bmp");
     let bmp: Bmp<BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
+    Image::new(&bmp, Point::new(50, 50)).draw(&mut fb).unwrap();
     //Write the frame buffer to the display struct made earlier
     fb.flush(&mut display).unwrap();
 ```
