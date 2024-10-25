@@ -1,16 +1,9 @@
-use embedded_graphics_core::prelude::{Dimensions, DrawTarget, PixelColor};
+use embedded_graphics_core::{
+    pixelcolor::BinaryColor,
+    prelude::{Dimensions, DrawTarget},
+};
 
 use super::*;
-
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-pub enum Color {
-    Black,
-    White,
-}
-
-impl PixelColor for Color {
-    type Raw = ();
-}
 
 pub struct Framebuffer {
     framebuffer: [u8; WIDTH * HEIGHT / 8],
@@ -44,7 +37,7 @@ impl Dimensions for Framebuffer {
 }
 
 impl DrawTarget for Framebuffer {
-    type Color = Color;
+    type Color = BinaryColor;
 
     type Error = ();
 
@@ -63,12 +56,10 @@ impl DrawTarget for Framebuffer {
             let bit_index = 7 - x % 8;
 
             match color {
-                Color::White => {
-                    *byte |= 0b1 << bit_index;
-                }
-                Color::Black => {
-                    *byte &= !(0b1 << bit_index);
-                }
+                //White Pixel
+                BinaryColor::On => *byte |= 0b1 << bit_index,
+                //Black Pixel
+                BinaryColor::Off => *byte &= !(0b1 << bit_index),
             }
         }
 
