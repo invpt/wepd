@@ -535,7 +535,7 @@ impl<C: IsDisplayConfiguration> Display<C> {
             }
         }
         #[cfg(feature = "async")]
-        match self.config.busy.wait_for_high().await {
+        match self.config.busy.wait_for_low().await {
             Ok(()) => (),
             Err(e) => return Err(DisplayError::Input(e)),
         };
