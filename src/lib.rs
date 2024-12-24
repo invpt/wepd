@@ -2,11 +2,22 @@
 
 use core::fmt::Debug;
 
+use embedded_hal::digital::OutputPin;
+#[cfg(not(feature = "async"))]
 use embedded_hal::{
     delay::DelayNs,
-    digital::{InputPin, OutputPin},
+    digital::InputPin,
     spi::{self, SpiDevice},
 };
+#[cfg(feature = "async")]
+use embedded_hal_async::{
+    delay::DelayNs,
+    digital::Wait as InputPin,
+    spi::{self, SpiDevice},
+};
+
+#[cfg(feature = "embedded-graphics")]
+pub use embedded_graphics::*;
 
 #[cfg(feature = "embedded-graphics")]
 mod embedded_graphics;
@@ -17,8 +28,6 @@ mod private {
 
 use geometry::*;
 use private::*;
-#[cfg(feature = "embedded-graphics")]
-pub use embedded_graphics::*;
 
 const WIDTH: usize = 200;
 const HEIGHT: usize = 200;
@@ -133,7 +142,9 @@ where
 pub struct BusyTimeout;
 
 pub trait BusyWait {
-    fn poll_wait(&mut self) -> Result<(), BusyTimeout>;
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    #[cfg_attr(feature = "async", allow(async_fn_in_trait))]
+    async fn poll_wait(&mut self) -> Result<(), BusyTimeout>;
 }
 
 pub struct DelayWaiter<Delay> {
@@ -169,9 +180,10 @@ where Delay: DelayNs {
 
 impl<Delay> BusyWait for DelayWaiter<Delay>
 where Delay: DelayNs {
-    fn poll_wait(&mut self) -> Result<(), BusyTimeout> {
-        self.delay.delay_ms(self.delay_ms);
-        
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+   async fn poll_wait(&mut self) -> Result<(), BusyTimeout> {
+        self.delay.delay_ms(self.delay_ms).await;
+
         if self.timeout_ms != 0 {
             match self.timeout_ms.checked_sub(self.delay_ms) {
                 Some(new_timeout) => {
@@ -213,24 +225,27 @@ impl<C: IsDisplayConfiguration> Display<C> {
         })
     }
 
-    pub fn reset(&mut self) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    pub async fn reset(&mut self) -> Result<(), Error<C>> {
         do_output(self.config.rst.set_low())?;
-        self.config.delay.delay_ms(10);
+        self.config.delay.delay_ms(10).await;
         do_output(self.config.rst.set_high())?;
-        self.config.delay.delay_ms(10);
+        self.config.delay.delay_ms(10).await;
 
         Ok(())
     }
 
-    pub fn clear_screen(&mut self, value: u8) -> Result<(), Error<C>> {
-        self.write_screen_buffer(value)?;
-        self.refresh_all(true)?;
-        self.write_screen_buffer_again(value)?;
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    pub async fn clear_screen(&mut self, value: u8) -> Result<(), Error<C>> {
+        self.write_screen_buffer(value).await?;
+        self.refresh_all(true).await?;
+        self.write_screen_buffer_again(value).await?;
 
         Ok(())
     }
 
-    pub fn draw_image(
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    pub async fn draw_image(
         &mut self,
         bitmap: &[u8],
         x_lo: i16,
@@ -242,14 +257,15 @@ impl<C: IsDisplayConfiguration> Display<C> {
             x: Span { lo: x_lo, hi: x_hi },
             y: Span { lo: y_lo, hi: y_hi },
         };
-        self.write_image(bitmap, x_lo, y_lo, x_hi, y_hi)?;
-        self.refresh(rect)?;
-        self.write_image_again(bitmap, x_lo, y_lo, x_hi, y_hi)?;
+        self.write_image(bitmap, x_lo, y_lo, x_hi, y_hi).await?;
+        self.refresh(rect).await?;
+        self.write_image_again(bitmap, x_lo, y_lo, x_hi, y_hi).await?;
 
         Ok(())
     }
 
-    pub fn write_image(
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    pub async fn write_image(
         &mut self,
         bitmap: &[u8],
         x_lo: i16,
@@ -261,11 +277,12 @@ impl<C: IsDisplayConfiguration> Display<C> {
             x: Span { lo: x_lo, hi: x_hi },
             y: Span { lo: y_lo, hi: y_hi },
         };
-        self.write_image_inner(0x24, bitmap, rect)?;
+        self.write_image_inner(0x24, bitmap, rect).await?;
         Ok(())
     }
 
-    fn write_image_again(
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn write_image_again(
         &mut self,
         bitmap: &[u8],
         x_lo: i16,
@@ -277,18 +294,19 @@ impl<C: IsDisplayConfiguration> Display<C> {
             x: Span { lo: x_lo, hi: x_hi },
             y: Span { lo: y_lo, hi: y_hi },
         };
-        self.write_image_inner(0x24, bitmap, rect)?;
+        self.write_image_inner(0x24, bitmap, rect).await?;
         Ok(())
     }
 
-    fn write_image_inner(
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn write_image_inner(
         &mut self,
         command: u8,
         bitmap: &[u8],
         rect: Rect,
     ) -> Result<(), Error<C>> {
         if self.initial_write {
-            self.write_screen_buffer(0xFF)?;
+            self.write_screen_buffer(0xFF).await?;
         }
 
         let Some(screen_rect) = rect.intersection(SCREEN_RECT) else {
@@ -303,92 +321,100 @@ impl<C: IsDisplayConfiguration> Display<C> {
             ..screen_rect
         };
 
-        self.set_partial_ram_area(aligned_rect)?;
+        self.set_partial_ram_area(aligned_rect).await?;
 
-        self.transfer_command(command)?;
-        self.config.spi.write(bitmap)?;
+        self.transfer_command(command).await?;
+        self.config.spi.write(bitmap).await?;
 
         Ok(())
     }
 
-    fn init(&mut self) -> Result<(), Error<C>> {
-        self.init_display()?;
-        self.power_on()?;
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn init(&mut self) -> Result<(), Error<C>> {
+        self.init_display().await?;
+        self.power_on().await?;
         self.initialized = true;
         Ok(())
     }
 
-    fn init_display(&mut self) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn init_display(&mut self) -> Result<(), Error<C>> {
         // TODO:   if (_hibernating) _reset();
 
-        self.transfer_command(0x01)?;
-        self.config.spi.write(&[0xC7, 0x00, 0x00])?;
+        self.transfer_command(0x01).await?;
+        self.config.spi.write(&[0xC7, 0x00, 0x00]).await?;
 
         // TODO: if(reduceBoosterTime) {...}
 
-        self.transfer_command(0x18)?;
-        self.config.spi.write(&[0x80])?;
+        self.transfer_command(0x18).await?;
+        self.config.spi.write(&[0x80]).await?;
 
-        self.set_dark_border(false)?;
+        self.set_dark_border(false).await?;
 
-        self.set_partial_ram_area(SCREEN_RECT)?;
+        self.set_partial_ram_area(SCREEN_RECT).await?;
 
         Ok(())
     }
 
-    fn power_on(&mut self) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn power_on(&mut self) -> Result<(), Error<C>> {
         //TODO: if(waitingPowerOn)
         if self.power_is_on {
             return Ok(());
         }
 
-        self.transfer_command(0x22)?;
-        self.config.spi.write(&[0xf8])?;
-        self.transfer_command(0x20)?;
-        self.wait_while_busy()?;
+        self.transfer_command(0x22).await?;
+        self.config.spi.write(&[0xf8]).await?;
+        self.transfer_command(0x20).await?;
+        self.wait_while_busy().await?;
         self.power_is_on = true;
 
         Ok(())
     }
 
-    fn set_dark_border(&mut self, dark_border: bool) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn set_dark_border(&mut self, dark_border: bool) -> Result<(), Error<C>> {
         //TODO: if(_hibernating)return;
-        self.transfer_command(0x3C)?;
+        self.transfer_command(0x3C).await?;
         self.config
             .spi
-            .write(&[if dark_border { 0x02 } else { 0x05 }])?;
+            .write(&[if dark_border { 0x02 } else { 0x05 }])
+            .await?;
 
         Ok(())
     }
 
-    pub fn power_off(&mut self) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    pub async fn power_off(&mut self) -> Result<(), Error<C>> {
         if !self.power_is_on {
             return Ok(());
         }
 
-        self.transfer_command(0x22)?;
-        self.config.spi.write(&[0x83])?;
-        self.transfer_command(0x20)?;
-        self.wait_while_busy()?;
+        self.transfer_command(0x22).await?;
+        self.config.spi.write(&[0x83]).await?;
+        self.transfer_command(0x20).await?;
+        self.wait_while_busy().await?;
         self.power_is_on = false;
         self.initialized = false;
 
         Ok(())
     }
 
-    fn refresh_all(&mut self, partial_update_mode: bool) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn refresh_all(&mut self, partial_update_mode: bool) -> Result<(), Error<C>> {
         if partial_update_mode {
-            self.refresh(SCREEN_RECT)?;
+            self.refresh(SCREEN_RECT).await?;
         } else {
-            self.update_full()?;
+            self.update_full().await?;
         }
 
         Ok(())
     }
 
-    fn refresh(&mut self, rect: Rect) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn refresh(&mut self, rect: Rect) -> Result<(), Error<C>> {
         if self.initial_refresh {
-            return self.refresh_all(false);
+            return self.update_full().await;
         }
         let rect = rect.intersection(SCREEN_RECT);
         let Some(rect) = rect else {
@@ -402,93 +428,103 @@ impl<C: IsDisplayConfiguration> Display<C> {
             y: rect.y,
         };
         if !self.initialized {
-            self.init()?;
+            self.init().await?;
         }
-        self.set_partial_ram_area(rect)?;
-        self.update_part()?;
+        self.set_partial_ram_area(rect).await?;
+        self.update_part().await?;
 
         Ok(())
     }
 
-    fn update_full(&mut self) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn update_full(&mut self) -> Result<(), Error<C>> {
         self.initial_refresh = false;
 
-        self.transfer_command(0x22)?;
-        self.config.spi.write(&[0xf4])?;
-        self.transfer_command(0x20)?;
-        self.wait_while_busy()?;
+        self.transfer_command(0x22).await?;
+        self.config.spi.write(&[0xf4]).await?;
+        self.transfer_command(0x20).await?;
+        self.wait_while_busy().await?;
 
         Ok(())
     }
 
-    fn update_part(&mut self) -> Result<(), Error<C>> {
-        self.transfer_command(0x22)?;
-        self.config.spi.write(&[0xfc])?;
-        self.transfer_command(0x20)?;
-        self.wait_while_busy()?;
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn update_part(&mut self) -> Result<(), Error<C>> {
+        self.transfer_command(0x22).await?;
+        self.config.spi.write(&[0xfc]).await?;
+        self.transfer_command(0x20).await?;
+        self.wait_while_busy().await?;
 
         Ok(())
     }
 
-    fn set_partial_ram_area(&mut self, rect: Rect) -> Result<(), Error<C>> {
-        self.transfer_command(0x11)?;
-        self.config.spi.write(&[0x03])?;
-        self.transfer_command(0x44)?;
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn set_partial_ram_area(&mut self, rect: Rect) -> Result<(), Error<C>> {
+        self.transfer_command(0x11).await?;
+        self.config.spi.write(&[0x03]).await?;
+        self.transfer_command(0x44).await?;
         self.config
             .spi
-            .write(&[(rect.x.lo / 8) as u8, ((rect.x.hi - 1) / 8) as u8])?;
-        self.transfer_command(0x45)?;
+            .write(&[(rect.x.lo / 8) as u8, ((rect.x.hi - 1) / 8) as u8])
+            .await?;
+        self.transfer_command(0x45).await?;
         self.config.spi.write(&[
             (rect.y.lo % 256) as u8,
             (rect.y.lo / 256) as u8,
             ((rect.y.hi - 1) % 256) as u8,
             ((rect.y.hi - 1) % 256) as u8,
-        ])?;
-        self.transfer_command(0x4e)?;
-        self.config.spi.write(&[(rect.x.lo / 8) as u8])?;
-        self.transfer_command(0x4f)?;
+        ]).await?;
+        self.transfer_command(0x4e).await?;
+        self.config.spi.write(&[(rect.x.lo / 8) as u8]).await?;
+        self.transfer_command(0x4f).await?;
         self.config
             .spi
-            .write(&[(rect.y.lo % 256) as u8, (rect.y.lo / 256) as u8])?;
+            .write(&[(rect.y.lo % 256) as u8, (rect.y.lo / 256) as u8])
+            .await?;
 
         Ok(())
     }
 
-    fn write_screen_buffer(&mut self, value: u8) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn write_screen_buffer(&mut self, value: u8) -> Result<(), Error<C>> {
         if !self.initialized {
-            self.init()?;
+            self.init().await?;
         }
         if self.initial_write {
-            self.write_screen_buffer_inner(0x26, value)?;
+            self.write_screen_buffer_inner(0x26, value).await?;
         }
-        self.write_screen_buffer_inner(0x24, value)?;
+        self.write_screen_buffer_inner(0x24, value).await?;
         self.initial_write = false;
 
         Ok(())
     }
 
-    fn write_screen_buffer_again(&mut self, value: u8) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn write_screen_buffer_again(&mut self, value: u8) -> Result<(), Error<C>> {
         if !self.initialized {
-            self.init()?;
+            self.init().await?;
         }
-        self.write_screen_buffer_inner(0x24, value)?;
+        self.write_screen_buffer_inner(0x24, value).await?;
 
         Ok(())
     }
 
-    fn write_screen_buffer_inner(&mut self, command: u8, value: u8) -> Result<(), Error<C>> {
-        self.transfer_command(command)?;
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn write_screen_buffer_inner(&mut self, command: u8, value: u8) -> Result<(), Error<C>> {
+        self.transfer_command(command).await?;
         for _ in 0..WIDTH * HEIGHT / 8 {
-            self.config.spi.write(&[value])?;
+            self.config.spi.write(&[value]).await?;
         }
 
         Ok(())
     }
 
-    fn wait_while_busy(&mut self) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn wait_while_busy(&mut self) -> Result<(), Error<C>> {
         // Give some time for `busy` to be asserted by the display
-        self.config.delay.delay_ms(1);
+        self.config.delay.delay_ms(1).await;
 
+        #[cfg(not(feature = "async"))]
         while do_input(self.config.busy.is_high())? {
             match self.config.busy_wait.poll_wait() {
                 Ok(()) => (),
@@ -498,18 +534,25 @@ impl<C: IsDisplayConfiguration> Display<C> {
                 },
             }
         }
+        #[cfg(feature = "async")]
+        match self.config.busy.wait_for_high().await {
+            Ok(()) => (),
+            Err(e) => return Err(DisplayError::Input(e)),
+        };
 
         Ok(())
     }
 
-    fn transfer_command(&mut self, value: u8) -> Result<(), Error<C>> {
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    async fn transfer_command(&mut self, value: u8) -> Result<(), Error<C>> {
         do_output(self.config.dc.set_low())?;
-        self.config.spi.write(&[value])?;
+        self.config.spi.write(&[value]).await?;
         do_output(self.config.dc.set_high())?;
         Ok(())
     }
 }
 
+#[cfg(not(feature = "async"))]
 fn do_input<T, Spi, Input, Output>(
     r: Result<T, Input>,
 ) -> Result<T, DisplayError<Spi, Input, Output>> {

@@ -16,11 +16,12 @@ impl Framebuffer {
         }
     }
 
-    pub fn flush<C: IsDisplayConfiguration>(
+    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
+    pub async fn flush<C: IsDisplayConfiguration>(
         &mut self,
         display: &mut Display<C>,
     ) -> Result<(), Error<C>> {
-        display.draw_image(&self.framebuffer, 0, 0, 200, 200)
+        display.draw_image(&self.framebuffer, 0, 0, 200, 200).await
     }
 }
 
