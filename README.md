@@ -4,7 +4,7 @@ The Watchy e-paper driver used in [`wable`](https://github.com/invpt/wable).
 
 ## Usage example
 
-With `embedded-hal-bus` to provide the `ExclusiveDevice` implementation of `SpiDevice` (note - values are for Watchy V2):
+With `embedded-hal-bus` to provide the `ExclusiveDevice` implementation of `SpiDevice`:
 ```rust
 #![no_std]
 #![no_main]
@@ -33,20 +33,38 @@ fn main() -> ! {
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
 
+    // Watchy V2 display pins
+    let mosi = io.pins.gpio23; // 23: Master-Out/Slave-In
+    let cs   = io.pins.gpio5;  //  5: Chip Select
+    let rst  = io.pins.gpio9;  //  9: Reset
+    let busy = io.pins.gpio19; // 19: Busy
+    let sclk = io.pins.gpio18; // 18: Serial Clock
+    let dc   = io.pins.gpio10; // 10: Direct Current
+
+    // Watchy V3 display pins
+    /*
+    let mosi = io.pins.gpio48; // 48: Master-Out/Slave-In
+    let cs   = io.pins.gpio33; // 33: Chip Select
+    let rst  = io.pins.gpio35; // 35: Reset
+    let busy = io.pins.gpio36; // 36: Busy
+    let sclk = io.pins.gpio47; // 47: Serial Clock
+    let dc   = io.pins.gpio34; // 34: Direct Current
+    */
+
     let bus = Spi::new(
         peripherals.SPI2,
         HertzU32::Hz(20000000),
         SpiMode::Mode0,
         &clocks,
     )
-    .with_mosi(io.pins.gpio23)
-    .with_sck(io.pins.gpio18);
+    .with_mosi(mosi)
+    .with_sck(sclk);
 
     let mut display = Display::new(DisplayConfiguration {
-        spi: ExclusiveDevice::new(bus, Output::new(io.pins.gpio5, Level::High), delay).unwrap(),
-        dc: Output::new(io.pins.gpio10, Level::High),
-        rst: Output::new(io.pins.gpio9, Level::High),
-        busy: Input::new(io.pins.gpio19, Pull::None),
+        spi: ExclusiveDevice::new(bus, Output::new(cs, Level::High), delay).unwrap(),
+        dc: Output::new(dc, Level::High),
+        rst: Output::new(rst, Level::High),
+        busy: Input::new(busy, Pull::None),
         delay,
         busy_wait: DelayWaiter::new(delay)
             .with_timeout_ms(100_000)
