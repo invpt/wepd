@@ -69,40 +69,47 @@ pub trait IsDisplayConfiguration: Internal {
     type Rst: OutputPin<Error = Self::OutputError>;
     type Busy: InputPin<Error = Self::InputError>;
     type Delay: DelayNs + Clone;
+    #[cfg(not(feature = "async"))]
     type Wait: BusyWait;
 
     type SpiError: spi::Error;
     type OutputError: Debug;
     type InputError: Debug;
 
+    #[cfg(not(feature = "async"))]
     fn get(
         self,
-    ) -> DisplayConfiguration<
-        Self::Spi,
-        Self::Dc,
-        Self::Rst,
-        Self::Busy,
-        Self::Delay,
-        Self::Wait,
-    >;
+    ) -> DisplayConfiguration<Self::Spi, Self::Dc, Self::Rst, Self::Busy, Self::Delay, Self::Wait>;
+    #[cfg(feature = "async")]
+    fn get(
+        self,
+    ) -> DisplayConfiguration<Self::Spi, Self::Dc, Self::Rst, Self::Busy, Self::Delay>;
 }
 
-pub struct DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, Wait> {
+pub struct DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, #[cfg(not(feature = "async"))] Wait> {
     pub spi: Spi,
     pub dc: Dc,
     pub rst: Rst,
     pub busy: Busy,
     pub delay: Delay,
+    #[cfg(not(feature = "async"))]
     pub busy_wait: Wait,
 }
 
+#[cfg(not(feature = "async"))]
 impl<Spi, Dc, Rst, Busy, Delay, BusyCallback> Internal
     for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, BusyCallback>
 {
 }
+#[cfg(feature = "async")]
+impl<Spi, Dc, Rst, Busy, Delay> Internal
+    for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay>
+{
+}
 
-impl<Spi, Dc, Rst, Busy, Delay, Wait, SpiError, OutputError, InputError>
-    IsDisplayConfiguration for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, Wait>
+#[cfg(not(feature = "async"))]
+impl<Spi, Dc, Rst, Busy, Delay, Wait, SpiError, OutputError, InputError> IsDisplayConfiguration
+    for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay, Wait>
 where
     Spi: SpiDevice<Error = SpiError>,
     Dc: OutputPin<Error = OutputError>,
@@ -126,14 +133,37 @@ where
 
     fn get(
         self,
-    ) -> DisplayConfiguration<
-        Self::Spi,
-        Self::Dc,
-        Self::Rst,
-        Self::Busy,
-        Self::Delay,
-        Self::Wait,
-    > {
+    ) -> DisplayConfiguration<Self::Spi, Self::Dc, Self::Rst, Self::Busy, Self::Delay, Self::Wait>
+    {
+        self
+    }
+}
+#[cfg(feature = "async")]
+impl<Spi, Dc, Rst, Busy, Delay, SpiError, OutputError, InputError> IsDisplayConfiguration
+    for DisplayConfiguration<Spi, Dc, Rst, Busy, Delay>
+where
+    Spi: SpiDevice<Error = SpiError>,
+    Dc: OutputPin<Error = OutputError>,
+    Rst: OutputPin<Error = OutputError>,
+    Busy: InputPin<Error = InputError>,
+    Delay: DelayNs + Clone,
+    SpiError: spi::Error,
+    OutputError: Debug,
+    InputError: Debug,
+{
+    type Spi = Spi;
+    type Dc = Dc;
+    type Rst = Rst;
+    type Busy = Busy;
+    type Delay = Delay;
+    type SpiError = SpiError;
+    type OutputError = OutputError;
+    type InputError = InputError;
+
+    fn get(
+        self,
+    ) -> DisplayConfiguration<Self::Spi, Self::Dc, Self::Rst, Self::Busy, Self::Delay>
+    {
         self
     }
 }
@@ -141,18 +171,19 @@ where
 #[derive(Debug)]
 pub struct BusyTimeout;
 
+#[cfg(not(feature = "async"))]
 pub trait BusyWait {
-    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
-    #[cfg_attr(feature = "async", allow(async_fn_in_trait))]
-    async fn poll_wait(&mut self) -> Result<(), BusyTimeout>;
+    fn poll_wait(&mut self) -> Result<(), BusyTimeout>;
 }
 
+#[cfg(not(feature = "async"))]
 pub struct DelayWaiter<Delay> {
     delay: Delay,
     delay_ms: u32,
     timeout_ms: u32,
 }
 
+#[cfg(not(feature = "async"))]
 impl<Delay> DelayWaiter<Delay>
 where Delay: DelayNs {
     pub fn new(delay: Delay) -> Self {
@@ -178,11 +209,11 @@ where Delay: DelayNs {
     }
 }
 
+#[cfg(not(feature = "async"))]
 impl<Delay> BusyWait for DelayWaiter<Delay>
 where Delay: DelayNs {
-    #[cfg_attr(not(feature = "async"), remove_async_await::remove_async_await)]
-   async fn poll_wait(&mut self) -> Result<(), BusyTimeout> {
-        self.delay.delay_ms(self.delay_ms).await;
+    fn poll_wait(&mut self) -> Result<(), BusyTimeout> {
+        self.delay.delay_ms(self.delay_ms);
 
         if self.timeout_ms != 0 {
             match self.timeout_ms.checked_sub(self.delay_ms) {
@@ -205,8 +236,10 @@ pub struct Display<C: IsDisplayConfiguration> {
     initialized: bool,
     initial_refresh: bool,
     initial_write: bool,
-    config:
-        DisplayConfiguration<C::Spi, C::Dc, C::Rst, C::Busy, C::Delay, C::Wait>,
+    #[cfg(not(feature = "async"))]
+    config: DisplayConfiguration<C::Spi, C::Dc, C::Rst, C::Busy, C::Delay, C::Wait>,
+    #[cfg(feature = "async")]
+    config: DisplayConfiguration<C::Spi, C::Dc, C::Rst, C::Busy, C::Delay>,
 }
 
 impl<C: IsDisplayConfiguration> Display<C> {
