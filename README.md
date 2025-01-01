@@ -113,7 +113,3 @@ Make sure to have the `embedded-graphics` feature flag set. For embedded graphic
     //Write the frame buffer to the display struct made earlier
     fb.flush(&mut display).unwrap();
 ```
-
-## State
-
-This was a quick port from my original implementation that directly used APIs exposed by `esp-hal`.
